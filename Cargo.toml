@@ -1,0 +1,15 @@
+[package]
+name = "starship-editor"
+version = "0.1.0"
+edition = "2021"
+description = "Wizard and editor for the Starship prompt"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+ansi-to-tui = "7"
+anyhow = "1.0.104"
+crossterm = "0.28"
+dirs = "7.0.0"
+ratatui = "0.29"
+toml_edit = "0.25.15"
