@@ -113,55 +113,6 @@ pub const ALL_MODULES: &[&str] = &[
     "character",
 ];
 
-/// Modules the "Language version" toggle adds or removes.
-pub const LANGS: &[&str] = &[
-    "bun",
-    "c",
-    "cmake",
-    "cobol",
-    "cpp",
-    "crystal",
-    "daml",
-    "dart",
-    "deno",
-    "dotnet",
-    "elixir",
-    "elm",
-    "erlang",
-    "fennel",
-    "fortran",
-    "gleam",
-    "golang",
-    "haskell",
-    "haxe",
-    "java",
-    "julia",
-    "kotlin",
-    "lua",
-    "mojo",
-    "nim",
-    "nodejs",
-    "ocaml",
-    "odin",
-    "opa",
-    "perl",
-    "php",
-    "purescript",
-    "python",
-    "quarto",
-    "raku",
-    "rlang",
-    "red",
-    "ruby",
-    "rust",
-    "scala",
-    "solidity",
-    "swift",
-    "typst",
-    "vlang",
-    "zig",
-];
-
 pub const PROMPT_FIELDS: &[&str] = &[
     "format",
     "right_format",
@@ -181,13 +132,72 @@ impl ConfigDoc {
     pub fn parse(text: &str) -> Self {
         let doc = text
             .parse::<DocumentMut>()
-            .unwrap_or_else(|_| DocumentMut::new());
+            .expect("ConfigDoc::parse requires already validated TOML");
         Self { doc }
     }
 
     pub fn to_toml(&self) -> String {
         self.doc.to_string()
     }
+}
+
+pub fn validate(doc: &DocumentMut) -> Result<(), String> {
+    fn check(table: &dyn toml_edit::TableLike, prefix: &str) -> Result<(), String> {
+        if prefix.starts_with("palettes.")
+            || prefix == "palettes"
+            || prefix == "profiles"
+            || prefix.starts_with("profiles.")
+        {
+            return Ok(());
+        }
+        let owner = prefix.split('.').next().unwrap_or("");
+        if !prefix.is_empty()
+            && !ALL_MODULES.contains(&owner)
+            && owner != "env_var"
+            && owner != "custom"
+        {
+            return Ok(());
+        }
+        for (key, item) in table.iter() {
+            let path = if prefix.is_empty() {
+                key.to_string()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            if let Some(child) = item.as_table_like() {
+                check(child, &path)?;
+                continue;
+            }
+            if prefix.is_empty() && !PROMPT_FIELDS.contains(&key) && key != "follow_symlinks" {
+                continue;
+            }
+            let expected = match key {
+                "format" | "right_format" | "style" | "symbol" | "command" => {
+                    Some((item.as_str().is_some(), "a string"))
+                }
+                "disabled" | "add_newline" | "show_always" | "ssh_only" | "follow_symlinks" => {
+                    Some((item.as_bool().is_some(), "true or false"))
+                }
+                "scan_timeout" | "command_timeout" | "min_time" | "truncation_length" => Some((
+                    item.as_integer().is_some_and(|n| n >= 0),
+                    "a nonnegative integer",
+                )),
+                "detect_extensions" | "detect_files" | "detect_folders" => Some((
+                    item.as_array()
+                        .is_some_and(|a| a.iter().all(|v| v.as_str().is_some())),
+                    "an array of strings",
+                )),
+                _ => None,
+            };
+            if let Some((valid, expected)) = expected {
+                if !valid {
+                    return Err(format!("{path} requires {expected}"));
+                }
+            }
+        }
+        Ok(())
+    }
+    check(doc.as_table(), "")
 }
 
 pub fn config_path() -> PathBuf {
@@ -201,43 +211,64 @@ pub fn config_path() -> PathBuf {
         .join(".config/starship.toml")
 }
 
-pub fn read_config(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
+pub fn read_config(path: &Path) -> anyhow::Result<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error).with_context(|| format!("could not read {}", path.display())),
+    }
 }
 
-/// Copy the current file beside itself, then write. The copy is
-/// `name.bak.<unix seconds>`.
+/// Write beside the resolved target, preserve mode, sync, then atomically rename.
 pub fn write_config(path: &Path, text: &str, backup: bool) -> anyhow::Result<Option<PathBuf>> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("could not create {}", parent.display()))?;
+    use std::io::Write;
+    text.parse::<DocumentMut>()
+        .context("invalid TOML; nothing saved")?;
+    let target = if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        fs::canonicalize(path).context("could not resolve configuration symlink")?
+    } else {
+        path.to_path_buf()
+    };
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).with_context(|| format!("could not create {}", parent.display()))?;
+    let metadata = fs::metadata(&target).ok();
+    anyhow::ensure!(
+        !metadata
+            .as_ref()
+            .is_some_and(|m| m.permissions().readonly()),
+        "Target is read-only; choose Save as or fix permissions"
+    );
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    if let Some(meta) = &metadata {
+        file.as_file().set_permissions(meta.permissions())?;
+    }
+    file.write_all(text.as_bytes())?;
+    file.as_file().sync_all()?;
+    let copied = if backup && metadata.is_some() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let name = target.file_name().unwrap_or_default().to_string_lossy();
+        let dest = target.with_file_name(format!("{name}.bak.{stamp}"));
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)?;
+        std::io::copy(&mut fs::File::open(&target)?, &mut output)?;
+        if let Some(meta) = &metadata {
+            output.set_permissions(meta.permissions())?;
         }
-    }
-    let mut copied = None;
-    if backup && path.exists() {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("starship.toml");
-        let dest = path.with_file_name(format!("{name}.bak.{stamp}"));
-        fs::copy(path, &dest).with_context(|| format!("could not copy {}", path.display()))?;
-        copied = Some(dest);
-    }
-    fs::write(path, text).with_context(|| format!("could not write {}", path.display()))?;
+        output.sync_all()?;
+        Some(dest)
+    } else {
+        None
+    };
+    file.persist(&target)
+        .map_err(|e| e.error)
+        .with_context(|| format!("could not save {}", target.display()))?;
+    fs::File::open(parent)?.sync_all()?;
     Ok(copied)
-}
-
-pub fn expand_all() -> String {
-    ALL_MODULES.iter().map(|name| format!("${name}")).collect()
-}
-
-pub fn is_all(format: &str) -> bool {
-    format.trim() == "$all"
 }
 
 pub fn format_of(doc: &DocumentMut) -> Option<String> {
@@ -246,40 +277,13 @@ pub fn format_of(doc: &DocumentMut) -> Option<String> {
 
 pub fn logical_format(doc: &DocumentMut) -> String {
     match format_of(doc) {
-        Some(text) if !text.trim().is_empty() => text,
+        Some(text) => text,
         _ => "$all".to_string(),
     }
 }
 
 pub fn set_format(doc: &mut DocumentMut, format: &str) {
     doc["format"] = toml_edit::value(format);
-}
-
-pub fn is_disabled(doc: &DocumentMut, module: &str) -> bool {
-    doc.get(module)
-        .and_then(Item::as_table)
-        .and_then(|table| table.get("disabled"))
-        .and_then(Item::as_bool)
-        .unwrap_or(false)
-}
-
-pub fn set_disabled(doc: &mut DocumentMut, module: &str, disabled: bool) {
-    if disabled {
-        module_table(doc, module).insert("disabled", toml_edit::value(true));
-    } else if let Some(table) = doc.get_mut(module).and_then(Item::as_table_mut) {
-        table.remove("disabled");
-    }
-}
-
-pub fn module_shown(doc: &DocumentMut, name: &str) -> bool {
-    if is_disabled(doc, name) {
-        return false;
-    }
-    let format = logical_format(doc);
-    if is_all(&format) {
-        return true;
-    }
-    !find_vars(&format, name).is_empty()
 }
 
 /// Byte ranges of `$name` and `${name}`. `$c` does not match `$cmd_duration`.
@@ -289,7 +293,9 @@ pub fn find_vars(format: &str, name: &str) -> Vec<(usize, usize)> {
     let mut hits = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] != b'$' {
+        if bytes[i] != b'$'
+            || (i > 0 && bytes[..i].iter().rev().take_while(|b| **b == b'\\').count() % 2 == 1)
+        {
             i += 1;
             continue;
         }
@@ -311,7 +317,9 @@ pub fn find_vars(format: &str, name: &str) -> Vec<(usize, usize)> {
             continue;
         }
         let name_start = i;
-        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        while i < bytes.len()
+            && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'.')
+        {
             i += 1;
         }
         if &bytes[name_start..i] == needle {
@@ -321,6 +329,7 @@ pub fn find_vars(format: &str, name: &str) -> Vec<(usize, usize)> {
     hits
 }
 
+#[cfg(test)]
 pub fn remove_var(format: &str, name: &str) -> String {
     let hits = find_vars(format, name);
     if hits.is_empty() {
@@ -337,26 +346,8 @@ pub fn remove_var(format: &str, name: &str) -> String {
 }
 
 /// Insert `$name` before `$line_break` or `$character` when those exist.
-pub fn append_var(format: &str, name: &str) -> String {
-    if !find_vars(format, name).is_empty() {
-        return format.to_string();
-    }
-    let token = format!("${name}");
-    if name != "line_break" {
-        if let Some((at, _)) = find_vars(format, "line_break").into_iter().next() {
-            let mut text = format.to_string();
-            text.insert_str(at, &token);
-            return text;
-        }
-    }
-    if let Some((at, _)) = find_vars(format, "character").into_iter().next() {
-        let mut text = format.to_string();
-        text.insert_str(at, &token);
-        return text;
-    }
-    format!("{format}{token}")
-}
 
+#[cfg(test)]
 pub fn field_value(doc: &DocumentMut, module: Option<&str>, field: &str) -> String {
     let item = match module {
         Some(module) => doc
@@ -378,16 +369,13 @@ pub fn field_value(doc: &DocumentMut, module: Option<&str>, field: &str) -> Stri
     }
 }
 
+#[cfg(test)]
 pub fn set_field(
     doc: &mut DocumentMut,
     module: Option<&str>,
     field: &str,
     raw: &str,
 ) -> Result<(), String> {
-    if raw.is_empty() {
-        remove_field(doc, module, field);
-        return Ok(());
-    }
     let item = match field {
         "disabled" | "add_newline" => {
             let value = parse_bool(raw)?;
@@ -411,76 +399,6 @@ pub fn set_field(
         }
     }
     Ok(())
-}
-
-pub fn os_symbols(doc: &DocumentMut) -> Vec<(String, String)> {
-    let Some(table) = doc
-        .get("os")
-        .and_then(Item::as_table)
-        .and_then(|table| table.get("symbols"))
-        .and_then(Item::as_table)
-    else {
-        return Vec::new();
-    };
-    let mut names: Vec<(String, String)> = table
-        .iter()
-        .filter_map(|(key, value)| {
-            value
-                .as_str()
-                .map(|text| (key.to_string(), text.to_string()))
-        })
-        .collect();
-    names.sort_by(|a, b| a.0.cmp(&b.0));
-    names
-}
-
-pub fn set_os_symbol(doc: &mut DocumentMut, name: &str, value: &str) {
-    let symbols = os_symbols_mut(doc);
-    if value.is_empty() {
-        symbols.remove(name);
-    } else {
-        symbols.insert(name, toml_edit::value(value));
-    }
-}
-
-pub fn overlay_symbols(dest: &mut DocumentMut, src: &DocumentMut) {
-    let keys: Vec<String> = src
-        .iter()
-        .filter_map(|(key, item)| item.as_table().map(|_| key.to_string()))
-        .collect();
-    for key in keys {
-        if key == "palettes" || key == "profiles" {
-            continue;
-        }
-        let Some(src_table) = src.get(&key).and_then(Item::as_table) else {
-            continue;
-        };
-        if key == "os" {
-            if let Some(symbols) = src_table.get("symbols").and_then(Item::as_table) {
-                let pairs: Vec<(String, Item)> = symbols
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.clone()))
-                    .collect();
-                let dest_symbols = os_symbols_mut(dest);
-                for (name, value) in pairs {
-                    dest_symbols.insert(&name, value);
-                }
-            }
-            continue;
-        }
-        let fields: Vec<(String, Item)> = src_table
-            .iter()
-            .filter(|(field, value)| is_symbol_field(field) && !value.is_table())
-            .map(|(field, value)| (field.to_string(), value.clone()))
-            .collect();
-        if fields.is_empty() {
-            continue;
-        }
-        let dest_table = module_table(dest, &key);
-        for (field, value) in fields {
-            dest_table.insert(&field, value);
-        }
-    }
 }
 
 pub fn clear_symbols(doc: &mut DocumentMut) {
@@ -526,6 +444,7 @@ fn is_symbol_field(field: &str) -> bool {
     field == "symbol" || field == "read_only" || field.ends_with("_symbol")
 }
 
+#[cfg(test)]
 fn parse_bool(raw: &str) -> Result<bool, String> {
     match raw.trim() {
         "true" | "yes" | "on" => Ok(true),
@@ -534,7 +453,8 @@ fn parse_bool(raw: &str) -> Result<bool, String> {
     }
 }
 
-fn remove_field(doc: &mut DocumentMut, module: Option<&str>, field: &str) {
+#[cfg(test)]
+pub fn remove_field(doc: &mut DocumentMut, module: Option<&str>, field: &str) {
     match module {
         Some(module) => {
             if let Some(table) = doc.get_mut(module).and_then(Item::as_table_mut) {
@@ -606,7 +526,7 @@ other = \"stay\"
     #[test]
     fn clearing_a_field_removes_the_key() {
         let mut doc = ConfigDoc::parse("[rust]\nsymbol = \"R \"\nstyle = \"red\"\n");
-        set_field(&mut doc.doc, Some("rust"), "symbol", "").unwrap();
+        remove_field(&mut doc.doc, Some("rust"), "symbol");
         let saved = doc.to_toml();
         assert!(!saved.contains("symbol"), "{saved}");
         assert!(saved.contains("style = \"red\""), "{saved}");

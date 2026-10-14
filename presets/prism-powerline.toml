@@ -1,0 +1,57 @@
+# Aster original: Prism Powerline
+# Uses the terminal ANSI palette; changing the terminal theme recolors this prompt.
+# Nerd Fonts are recommended for icons and powerline separators.
+add_newline = true
+format = """[](purple)[ ✦ ](bg:purple fg:black)$directory[](fg:purple bg:cyan)$git_branch$git_status[](fg:cyan bg:green)$cmd_duration[](green)
+$character"""
+right_format = ''
+
+[directory]
+style = 'bg:purple fg:black'
+format = '[ $path ]($style)'
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' '
+
+[git_branch]
+style = 'bg:cyan fg:black'
+symbol = ' '
+format = '[ $symbol$branch ]($style)'
+
+[git_status]
+style = 'bg:cyan fg:black'
+format = '([ $all_status$ahead_behind ]($style))'
+conflicted = '!'
+ahead = '↑${count}'
+behind = '↓${count}'
+diverged = '↕'
+untracked = '?'
+stashed = '≡'
+modified = '~'
+staged = '+'
+renamed = '»'
+deleted = '×'
+
+[character]
+success_symbol = '[❯](bold purple)'
+error_symbol = '[×](bold red)'
+vimcmd_symbol = '[❮](bold cyan)'
+
+[cmd_duration]
+min_time = 2000
+style = 'bg:green fg:black'
+format = '[ $duration ]($style)'
+
+[time]
+disabled = false
+time_format = '%H:%M'
+style = 'cyan'
+format = '[ $time ]($style)'
+
+[fill]
+symbol = ' '
+
+[jobs]
+style = 'green'
+symbol = '⋮ '
+format = '[ $symbol$number ]($style)'

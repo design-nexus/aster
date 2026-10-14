@@ -1,13 +1,11 @@
 //! Builds a Starship prompt from shape, pieces, and colors.
 //! The current file is edited in place. Presets are not used.
 
-use std::process::Command;
-
-use toml_edit::{DocumentMut, Item};
+use toml_edit::DocumentMut;
 
 use crate::config::{self, ConfigDoc};
 
-const STEPS: &[&str] = &["Shape", "Lines", "Info", "Colors", "Icons", "Save"];
+const STEPS: &[&str] = &["Shape", "Lines", "Content", "Colors", "Icons", "Finish"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
@@ -208,31 +206,22 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn load() -> Self {
-        match Command::new("starship").arg("--version").output() {
-            Err(err) => Self {
-                modules: fallback_modules(),
-                starship_error: Some(format!("starship: {err}")),
+        match crate::preview::cli(&["module", "--list"]) {
+            Ok(text) => Self {
+                modules: parse_names(&text),
+                starship_error: None,
             },
-            Ok(output) if !output.status.success() => Self {
+            Err(error) => Self {
                 modules: fallback_modules(),
-                starship_error: Some("starship is not usable".into()),
+                starship_error: Some(error),
             },
-            Ok(_) => {
-                let modules = command(["module", "--list"])
-                    .map(|text| parse_names(&text))
-                    .filter(|names| !names.is_empty())
-                    .unwrap_or_else(fallback_modules);
-                Self {
-                    modules,
-                    starship_error: None,
-                }
-            }
         }
     }
 }
 
 pub struct Wizard {
     pub step: usize,
+    pub defaults: DocumentMut,
     shape_cursor: usize,
     lines_cursor: usize,
     info_cursor: usize,
@@ -241,7 +230,6 @@ pub struct Wizard {
     pub hex: Option<String>,
     design: Design,
     user_text: String,
-    pub saved: bool,
 }
 
 impl Wizard {
@@ -276,6 +264,7 @@ impl Wizard {
             .collect();
         Self {
             step: 0,
+            defaults: DocumentMut::new(),
             shape_cursor: 0,
             lines_cursor: 1,
             info_cursor: 0,
@@ -290,7 +279,6 @@ impl Wizard {
                 swatches,
             },
             user_text,
-            saved: false,
         }
     }
 
@@ -308,61 +296,11 @@ impl Wizard {
             2 => "What does the prompt show?".into(),
             3 => "What color is each piece?".into(),
             4 => "Do these icons look right?".into(),
-            _ => "Save this prompt?".into(),
+            _ => "Adopt this prompt?".into(),
         }
     }
 
     /// Second line under the question. Empty when the question is enough.
-    pub fn note(&self, path: &str) -> String {
-        if let Some(hex) = &self.hex {
-            return if hex.is_empty() {
-                "#cba6f7".into()
-            } else {
-                hex.clone()
-            };
-        }
-        match self.step {
-            2 => "Included pieces stay in this order. The prompt character stays last.".into(),
-            5 => format!("{path}   ·   a copy of the current file is kept beside it first"),
-            _ => String::new(),
-        }
-    }
-
-    pub fn keys(&self) -> &'static [(&'static str, &'static str)] {
-        if self.hex.is_some() {
-            return &[("enter", "keep"), ("esc", "cancel")];
-        }
-        match self.step {
-            0 => &[
-                ("↑↓", "choose"),
-                ("enter", "continue"),
-                ("esc", "quit"),
-                ("", "nothing is saved until the last step"),
-            ],
-            1 | 4 => &[("↑↓", "choose"), ("enter", "continue"), ("esc", "back")],
-            2 => &[
-                ("↑↓", "move"),
-                ("space", "include"),
-                ("[ ]", "reorder"),
-                ("enter", "continue"),
-                ("esc", "back"),
-            ],
-            3 => &[
-                ("↑↓", "piece"),
-                ("←→", "color"),
-                ("c", "hex"),
-                ("t", "light/dark"),
-                ("enter", "continue"),
-                ("esc", "back"),
-            ],
-            _ => &[
-                ("s", "save"),
-                ("e", "edit without saving"),
-                ("esc", "back"),
-                ("q", "quit"),
-            ],
-        }
-    }
 
     pub fn summary(&self) -> Vec<(&'static str, String)> {
         let design = self.live_design();
@@ -391,7 +329,14 @@ impl Wizard {
         vec![
             ("Shape", shape.into()),
             ("Lines", lines.into()),
-            ("Shows", if shows.is_empty() { "Prompt character".into() } else { shows }),
+            (
+                "Shows",
+                if shows.is_empty() {
+                    "Prompt character".into()
+                } else {
+                    shows
+                },
+            ),
             ("Icons", icons.into()),
         ]
     }
@@ -503,14 +448,6 @@ impl Wizard {
     }
 
     /// Background and foreground for a color-step row.
-    pub fn choice_rgb(&self, index: usize) -> Option<((u8, u8, u8), (u8, u8, u8))> {
-        if self.step != 3 {
-            return None;
-        }
-        let piece = &self.design.pieces[self.color_indexes()[index]];
-        let (bg, fg) = piece_colors(piece, &self.design.swatches, self.live_shape());
-        Some((parse_rgb(&bg)?, parse_rgb(&fg)?))
-    }
 
     pub fn move_cursor(&mut self, delta: isize) {
         let count = self.choice_count();
@@ -641,12 +578,12 @@ impl Wizard {
     }
 
     pub fn preview(&mut self) -> String {
-        render(&self.user_text, &self.live_design()).to_toml()
+        render_with_defaults(&self.user_text, &self.live_design(), &self.defaults).to_toml()
     }
 
     pub fn draft(&mut self) -> ConfigDoc {
         self.commit_cursor();
-        render(&self.user_text, &self.design)
+        render_with_defaults(&self.user_text, &self.design, &self.defaults)
     }
 
     fn commit_cursor(&mut self) {
@@ -655,14 +592,6 @@ impl Wizard {
             1 => self.design.lines = lines_at(self.lines_cursor),
             4 => self.design.icons = icons_at(self.icons_cursor),
             _ => {}
-        }
-    }
-
-    fn live_shape(&self) -> Shape {
-        if self.step == 0 {
-            shape_at(self.shape_cursor)
-        } else {
-            self.design.shape
         }
     }
 
@@ -691,35 +620,80 @@ impl Wizard {
     }
 }
 
-pub fn load_swatches() -> Vec<Swatch> {
-    let Some(home) = dirs::home_dir() else {
-        return default_swatches();
-    };
-    for dir in [
-        home.join(".local/state/omarchy/current/theme/colors.toml"),
-        home.join(".config/omarchy/current/theme/colors.toml"),
-    ] {
-        if let Some(text) = std::fs::read_to_string(&dir).ok() {
-            let parsed = swatches_from(&text);
-            if !parsed.is_empty() {
-                return parsed;
+#[cfg(test)]
+pub fn render(user_text: &str, design: &Design) -> ConfigDoc {
+    render_with_defaults(user_text, design, &DocumentMut::new())
+}
+fn render_with_defaults(user_text: &str, design: &Design, defaults: &DocumentMut) -> ConfigDoc {
+    let mut doc = ConfigDoc::parse(user_text);
+    if design.icons == Icons::None {
+        for piece in design.pieces.iter().filter(|p| p.included) {
+            for (module, content) in piece.modules {
+                if content.contains("$symbol") && *module != "os" {
+                    module_table(&mut doc.doc, module).insert("symbol", toml_edit::value(""));
+                }
+                if let Some(table) = defaults.get(module).and_then(|i| i.as_table_like()) {
+                    for (key, value) in table.iter() {
+                        if value.as_str().is_some()
+                            && (key == "read_only" || key == "symbol" || key.ends_with("_symbol"))
+                        {
+                            module_table(&mut doc.doc, module).insert(key, toml_edit::value(""));
+                        }
+                    }
+                }
             }
         }
+        module_table(&mut doc.doc, "directory").insert("read_only", toml_edit::value(""));
     }
-    default_swatches()
-}
-
-pub fn render(user_text: &str, design: &Design) -> ConfigDoc {
-    let mut doc = ConfigDoc::parse(user_text);
-    apply_icons(&mut doc.doc, design.icons);
+    apply_icons(&mut doc.doc, design.icons, defaults);
     write_palette(&mut doc.doc, design);
     write_modules(&mut doc.doc, design);
     config::set_format(&mut doc.doc, &format_string(design));
     doc.doc["add_newline"] = toml_edit::value(design.lines == Lines::Spaced);
+    if design.lines != Lines::One {
+        module_table(&mut doc.doc, "line_break").insert("disabled", toml_edit::value(false));
+    }
     doc
 }
 
-fn apply_icons(doc: &mut DocumentMut, icons: Icons) {
+fn apply_icons(doc: &mut DocumentMut, icons: Icons, defaults: &DocumentMut) {
+    if icons != Icons::Keep {
+        let mut names = vec![];
+        for source in [defaults, &*doc] {
+            if let Some(symbols) = source
+                .get("os")
+                .and_then(|i| i.as_table_like())
+                .and_then(|t| t.get("symbols"))
+                .and_then(|i| i.as_table_like())
+            {
+                names.extend(symbols.iter().map(|(k, _)| k.to_string()));
+            }
+        }
+        names.extend(
+            [
+                "Arch", "Linux", "Macos", "Windows", "Ubuntu", "Debian", "Unknown",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
+        names.sort();
+        names.dedup();
+        let os = module_table(doc, "os");
+        let symbols = os.entry("symbols").or_insert_with(toml_edit::table);
+        if let Some(table) = symbols.as_table_like_mut() {
+            for name in names {
+                table.insert(
+                    &name,
+                    toml_edit::value(if icons == Icons::Plain {
+                        format!("{name} ")
+                    } else {
+                        String::new()
+                    }),
+                );
+            }
+        }
+    }
+
     match icons {
         Icons::Keep => {}
         Icons::Plain => {
@@ -734,9 +708,15 @@ fn apply_icons(doc: &mut DocumentMut, icons: Icons) {
         Icons::Plain | Icons::None => ">",
     };
     let character = module_table(doc, "character");
-    character.insert("success_symbol", toml_edit::value(format!("[{glyph}](fg:character_fg)")));
-    character.insert("error_symbol", toml_edit::value(format!("[{glyph}](fg:status_fg)")));
-    character.insert("vimcmd_symbol", toml_edit::value(format!("[❮](fg:character_fg)")));
+    for (key, value) in [
+        ("success_symbol", format!("[{glyph}](fg:character_fg)")),
+        ("error_symbol", format!("[{glyph}](fg:status_fg)")),
+        ("vimcmd_symbol", "[❮](fg:character_fg)".into()),
+    ] {
+        if icons != Icons::Keep || !character.contains_key(key) {
+            character.insert(key, toml_edit::value(value));
+        }
+    }
 }
 
 const PLAIN_SYMBOLS: &[(&str, &str)] = &[
@@ -746,7 +726,6 @@ const PLAIN_SYMBOLS: &[(&str, &str)] = &[
     ("nodejs", "node "),
     ("golang", "go "),
     ("bun", "bun "),
-    ("os", ""),
     ("battery", "bat "),
     ("cmd_duration", "took "),
 ];
@@ -759,13 +738,21 @@ fn write_palette(doc: &mut DocumentMut, design: &Design) {
         table.insert(&format!("{}_bg", piece.id), toml_edit::value(bg));
         table.insert(&format!("{}_fg", piece.id), toml_edit::value(fg));
     }
-    if !design.pieces.iter().any(|piece| piece.id == "status" && piece.included) {
+    if !design
+        .pieces
+        .iter()
+        .any(|piece| piece.id == "status" && piece.included)
+    {
         table.insert("status_fg", toml_edit::value("#f38ba8"));
     }
 }
 
 fn write_modules(doc: &mut DocumentMut, design: &Design) {
-    let shown: Vec<&Piece> = design.pieces.iter().filter(|piece| piece.included).collect();
+    let shown: Vec<&Piece> = design
+        .pieces
+        .iter()
+        .filter(|piece| piece.included)
+        .collect();
     for (index, piece) in shown.iter().enumerate() {
         if piece.id == "character" {
             continue;
@@ -877,10 +864,12 @@ fn module_format(
 }
 
 fn piece_colors(piece: &Piece, swatches: &[Swatch], shape: Shape) -> (String, String) {
-    let bg = piece
-        .custom
-        .clone()
-        .unwrap_or_else(|| swatches.get(piece.swatch).map(|s| s.hex.clone()).unwrap_or_else(|| "#89b4fa".into()));
+    let bg = piece.custom.clone().unwrap_or_else(|| {
+        swatches
+            .get(piece.swatch)
+            .map(|s| s.hex.clone())
+            .unwrap_or_else(|| "#89b4fa".into())
+    });
     let fg = match shape {
         Shape::Plain if !piece.text_chosen => bg.clone(),
         _ if piece.light_text => "#f5f5f5".into(),
@@ -930,32 +919,22 @@ fn palette_table(doc: &mut DocumentMut) -> &mut toml_edit::Table {
     item.as_table_mut().expect("palette")
 }
 
-fn swatches_from(text: &str) -> Vec<Swatch> {
-    let Ok(doc) = text.parse::<DocumentMut>() else {
-        return Vec::new();
-    };
-    let mut swatches = Vec::new();
-    for name in ["accent", "blue", "red", "green", "yellow", "cyan", "magenta", "foreground"] {
-        if let Some(hex) = doc.get(name).and_then(Item::as_str).and_then(normalize_hex) {
-            swatches.push(Swatch { name: name.into(), hex });
-        }
-    }
-    swatches
-}
-
 pub fn default_swatches() -> Vec<Swatch> {
     [
-        ("accent", "#89b4fa"),
-        ("blue", "#89b4fa"),
-        ("red", "#f38ba8"),
-        ("green", "#a6e3a1"),
-        ("yellow", "#f9e2af"),
+        ("accent", "#B5A0FF"),
+        ("blue", "#83D9DC"),
+        ("red", "#ED8796"),
+        ("green", "#A3D6B0"),
+        ("yellow", "#EAC38C"),
         ("cyan", "#94e2d5"),
         ("magenta", "#cba6f7"),
         ("foreground", "#cdd6f4"),
     ]
     .into_iter()
-    .map(|(name, hex)| Swatch { name: name.into(), hex: hex.into() })
+    .map(|(name, hex)| Swatch {
+        name: name.into(),
+        hex: hex.into(),
+    })
     .collect()
 }
 
@@ -964,7 +943,10 @@ fn normalize_hex(raw: &str) -> Option<String> {
     let text = match text.len() {
         3 => {
             let chars: Vec<char> = text.chars().collect();
-            format!("{}{}{}{}{}{}", chars[0], chars[0], chars[1], chars[1], chars[2], chars[2])
+            format!(
+                "{}{}{}{}{}{}",
+                chars[0], chars[0], chars[1], chars[1], chars[2], chars[2]
+            )
         }
         6 => text.to_string(),
         _ => return None,
@@ -1012,15 +994,6 @@ fn fallback_modules() -> Vec<String> {
         .collect()
 }
 
-fn command(args: impl IntoIterator<Item = impl AsRef<str>>) -> Option<String> {
-    let args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
-    let output = Command::new("starship").args(&args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 fn parse_names(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
@@ -1052,18 +1025,33 @@ mod tests {
         assert!(dir < git, "{format}");
         let style = field_value(&doc.doc, Some("directory"), "style");
         assert_eq!(style, "fg:directory_fg");
-        assert!(doc.to_toml().contains("[palettes.wizard]"), "{}", doc.to_toml());
+        assert!(
+            doc.to_toml().contains("[palettes.wizard]"),
+            "{}",
+            doc.to_toml()
+        );
     }
 
     #[test]
     fn moving_git_ahead_of_directory_changes_order() {
         let doc = sample(|design| {
-            let git = design.pieces.iter().position(|piece| piece.id == "git_branch").unwrap();
-            let dir = design.pieces.iter().position(|piece| piece.id == "directory").unwrap();
+            let git = design
+                .pieces
+                .iter()
+                .position(|piece| piece.id == "git_branch")
+                .unwrap();
+            let dir = design
+                .pieces
+                .iter()
+                .position(|piece| piece.id == "directory")
+                .unwrap();
             design.pieces.swap(git, dir);
         });
         let format = field_value(&doc.doc, None, "format");
-        assert!(format.find("$git_branch").unwrap() < format.find("$directory").unwrap(), "{format}");
+        assert!(
+            format.find("$git_branch").unwrap() < format.find("$directory").unwrap(),
+            "{format}"
+        );
     }
 
     #[test]
@@ -1082,5 +1070,30 @@ mod tests {
         let saved = doc.to_toml();
         assert!(saved.contains("# keep me"), "{saved}");
         assert!(saved.contains("symbol = \"GB \""), "{saved}");
+    }
+    #[test]
+    fn keep_icons_preserves_character_and_os_symbols() {
+        let mut w = Wizard::new(
+            "[character]\nsuccess_symbol = '[λ](green)'\n[os.symbols]\nArch = 'A'\n".into(),
+            default_swatches(),
+        );
+        let d = w.draft();
+        assert_eq!(
+            d.doc["character"]["success_symbol"].as_str(),
+            Some("[λ](green)")
+        );
+        assert_eq!(d.doc["os"]["symbols"]["Arch"].as_str(), Some("A"));
+    }
+    #[test]
+    fn no_icons_overrides_defaults_and_two_lines_enable_line_break() {
+        let mut w = Wizard::new("[line_break]\ndisabled=true\n".into(), default_swatches());
+        w.defaults = "[git_branch]\nsymbol='icon'\n[os.symbols]\nArch='icon'\n"
+            .parse()
+            .unwrap();
+        w.design.icons = Icons::None;
+        let d = w.draft();
+        assert_eq!(d.doc["git_branch"]["symbol"].as_str(), Some(""));
+        assert_eq!(d.doc["os"]["symbols"]["Arch"].as_str(), Some(""));
+        assert_eq!(d.doc["line_break"]["disabled"].as_bool(), Some(false));
     }
 }

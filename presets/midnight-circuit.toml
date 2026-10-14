@@ -1,0 +1,56 @@
+# Aster original: Midnight Circuit
+# Dark-terminal palette. Powerline variants require a Nerd Font.
+add_newline = true
+format = """[┌─ ⌁](bold #66f2d5) $directory[ / ](#414868)$git_branch$git_status$fill$time
+[└─](bold #66f2d5) $character"""
+right_format = '$cmd_duration$jobs'
+
+[directory]
+style = 'bold #66f2d5'
+format = '[ $path ]($style)'
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' '
+
+[git_branch]
+style = 'bold #8c9eff'
+symbol = ' '
+format = '[ $symbol$branch ]($style)'
+
+[git_status]
+style = 'bold #8c9eff'
+format = '([ $all_status$ahead_behind ]($style))'
+conflicted = '!'
+ahead = '↑${count}'
+behind = '↓${count}'
+diverged = '↕'
+untracked = '?'
+stashed = '≡'
+modified = '~'
+staged = '+'
+renamed = '»'
+deleted = '×'
+
+[character]
+success_symbol = '[❯](bold #66f2d5)'
+error_symbol = '[×](bold #e78284)'
+vimcmd_symbol = '[❮](bold #8c9eff)'
+
+[cmd_duration]
+min_time = 2000
+style = '#ffcc80'
+format = '[ $duration ]($style)'
+
+[time]
+disabled = false
+time_format = '%H:%M'
+style = '#8c9eff'
+format = '[ $time ]($style)'
+
+[fill]
+symbol = ' '
+
+[jobs]
+style = '#ffcc80'
+symbol = '⋮ '
+format = '[ $symbol$number ]($style)'

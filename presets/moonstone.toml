@@ -1,0 +1,55 @@
+# Aster original: Moonstone
+# Dark-terminal palette. Powerline variants require a Nerd Font.
+add_newline = true
+format = """[☾](bold #d5c4f1) $directory[· ](#a5b4d4)$git_branch$git_status$character"""
+right_format = '$cmd_duration'
+
+[directory]
+style = 'bold #d5c4f1'
+format = '[ $path ]($style)'
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' '
+
+[git_branch]
+style = 'bold #a5b4d4'
+symbol = ' '
+format = '[ $symbol$branch ]($style)'
+
+[git_status]
+style = 'bold #a5b4d4'
+format = '([ $all_status$ahead_behind ]($style))'
+conflicted = '!'
+ahead = '↑${count}'
+behind = '↓${count}'
+diverged = '↕'
+untracked = '?'
+stashed = '≡'
+modified = '~'
+staged = '+'
+renamed = '»'
+deleted = '×'
+
+[character]
+success_symbol = '[❯](bold #d5c4f1)'
+error_symbol = '[×](bold #e78284)'
+vimcmd_symbol = '[❮](bold #a5b4d4)'
+
+[cmd_duration]
+min_time = 2000
+style = '#ece5f6'
+format = '[ $duration ]($style)'
+
+[time]
+disabled = false
+time_format = '%H:%M'
+style = '#a5b4d4'
+format = '[ $time ]($style)'
+
+[fill]
+symbol = ' '
+
+[jobs]
+style = '#ece5f6'
+symbol = '⋮ '
+format = '[ $symbol$number ]($style)'

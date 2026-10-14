@@ -1,0 +1,56 @@
+# Aster original: Deep Forest
+# Dark-terminal palette. Powerline variants require a Nerd Font.
+add_newline = true
+format = """[╭─ ♣](bold #9fbc85) $directory$git_branch$git_status
+[╰─](#70aaa0) $character"""
+right_format = '$cmd_duration$time'
+
+[directory]
+style = 'bold #9fbc85'
+format = '[ $path ]($style)'
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' '
+
+[git_branch]
+style = 'bold #70aaa0'
+symbol = ' '
+format = '[ $symbol$branch ]($style)'
+
+[git_status]
+style = 'bold #70aaa0'
+format = '([ $all_status$ahead_behind ]($style))'
+conflicted = '!'
+ahead = '↑${count}'
+behind = '↓${count}'
+diverged = '↕'
+untracked = '?'
+stashed = '≡'
+modified = '~'
+staged = '+'
+renamed = '»'
+deleted = '×'
+
+[character]
+success_symbol = '[❯](bold #9fbc85)'
+error_symbol = '[×](bold #e78284)'
+vimcmd_symbol = '[❮](bold #70aaa0)'
+
+[cmd_duration]
+min_time = 2000
+style = '#ded6af'
+format = '[ $duration ]($style)'
+
+[time]
+disabled = false
+time_format = '%H:%M'
+style = '#70aaa0'
+format = '[ $time ]($style)'
+
+[fill]
+symbol = ' '
+
+[jobs]
+style = '#ded6af'
+symbol = '⋮ '
+format = '[ $symbol$number ]($style)'

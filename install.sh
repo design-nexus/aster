@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build starship-editor and install the binary.
+# Build aster and install the binary.
 # From a clone:  ./install.sh
-# From the web:  curl -fsSL https://raw.githubusercontent.com/design-nexus/starship-editor/main/install.sh | bash
+# From the web:  curl -fsSL https://raw.githubusercontent.com/design-nexus/aster/main/install.sh | bash
 # Optional:      ./install.sh --prefix "$HOME/.local"
 
 set -euo pipefail
 
 PREFIX="${HOME}/.local"
-REPO="https://github.com/design-nexus/starship-editor.git"
+REPO="https://github.com/design-nexus/aster.git"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       echo "Usage: install.sh [--prefix DIR]"
-      echo "Installs the starship-editor binary into DIR/bin. Default DIR is ~/.local."
+      echo "Installs the aster binary into DIR/bin. Default DIR is ~/.local."
       exit 0
       ;;
     *)
@@ -47,38 +47,33 @@ source_dir=""
 script_path="${BASH_SOURCE[0]:-}"
 if [[ -n "$script_path" && -f "$script_path" ]]; then
   candidate="$(cd "$(dirname "$script_path")" && pwd)"
-  if [[ -f "$candidate/Cargo.toml" ]] && grep -q 'name = "starship-editor"' "$candidate/Cargo.toml"; then
+  if [[ -f "$candidate/Cargo.toml" ]] && grep -q 'name = "aster"' "$candidate/Cargo.toml"; then
     source_dir="$candidate"
   fi
 fi
 
 if [[ -z "$source_dir" ]]; then
   if ! command -v git >/dev/null 2>&1; then
-    echo "git was not found, and this script is not inside a starship-editor checkout." >&2
+    echo "git was not found, and this script is not inside a aster checkout." >&2
     exit 1
   fi
   CLONE_DIR="$(mktemp -d)"
   echo "Cloning $REPO"
-  git clone --depth 1 "$REPO" "$CLONE_DIR/starship-editor"
-  source_dir="$CLONE_DIR/starship-editor"
+  git clone --depth 1 "$REPO" "$CLONE_DIR/aster"
+  source_dir="$CLONE_DIR/aster"
 fi
 
 echo "Building release binary"
-cargo build --release --manifest-path "$source_dir/Cargo.toml"
+cargo build --release --locked --manifest-path "$source_dir/Cargo.toml"
 
 install -d "$PREFIX/bin"
-dest="$PREFIX/bin/starship-editor"
+dest="$PREFIX/bin/aster"
 # A leftover symlink pointed at a removed Omarchy plugin. install(1) would
 # follow it and fail, so drop a symlink before copying the binary.
 if [[ -L "$dest" ]]; then
   rm -f "$dest"
 fi
-install -m 755 "$source_dir/target/release/starship-editor" "$dest"
-
-old="$PREFIX/bin/omarchy-starship"
-if [[ -L "$old" && ! -e "$old" ]]; then
-  rm -f "$old"
-fi
+install -m 755 "$source_dir/target/release/aster" "$dest"
 
 echo "Installed $dest"
 case ":$PATH:" in
@@ -88,4 +83,4 @@ case ":$PATH:" in
     echo "  export PATH=\"$PREFIX/bin:\$PATH\""
     ;;
 esac
-echo "Run: starship-editor"
+echo "Run: aster"

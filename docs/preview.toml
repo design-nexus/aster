@@ -1,0 +1,19 @@
+# Capture fixture: never installed as the user's prompt.
+format = '$directory$git_branch$git_status$rust$line_break$character'
+right_format = '$cmd_duration$jobs'
+add_newline = false
+[directory]
+style = 'bold #B5A0FF'
+[git_branch]
+style = '#83D9DC'
+[rust]
+style = '#EAC38C'
+[character]
+success_symbol = '[❯](#A3D6B0)'
+error_symbol = '[❯](#ED8796)'
+[cmd_duration]
+min_time = 1000
+style = '#EAC38C'
+[jobs]
+threshold = 1
+style = '#83D9DC'

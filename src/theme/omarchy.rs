@@ -54,28 +54,14 @@ fn theme_from_str(text: &str, name: &str) -> Result<Theme, String> {
             &["dark_background", "darker_background", "background"],
         ),
         border: first(&doc, &["muted", "selection", "dark_foreground"]),
+        muted: first(&doc, &["muted", "foreground"]),
+        error: first(&doc, &["red", "accent"]),
         selection,
         selection_fg: readable(selection, foreground, background),
         fg: foreground,
         accent,
-        gradient: palette(
-            &doc,
-            &["blue", "cyan", "green", "yellow", "orange", "red", "magenta"],
-            accent,
-        ),
+        gradient: vec![accent, first(&doc, &["cyan", "blue", "accent"])],
     })
-}
-
-fn palette(doc: &DocumentMut, keys: &[&str], fallback: Color) -> Vec<Color> {
-    let colors: Vec<Color> = keys
-        .iter()
-        .filter_map(|key| doc.get(*key).and_then(|item| item.as_str()).and_then(parse_hex))
-        .collect();
-    if colors.len() >= 2 {
-        colors
-    } else {
-        vec![fallback]
-    }
 }
 
 fn required(doc: &DocumentMut, key: &str) -> Result<Color, String> {

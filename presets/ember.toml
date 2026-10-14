@@ -1,0 +1,56 @@
+# Aster original: Ember
+# Dark-terminal palette. Powerline variants require a Nerd Font.
+add_newline = true
+format = """[](#edb86e)$directory[](fg:#edb86e bg:#30251f)$git_branch$git_status[](#30251f)
+[❯](#cd8b62) $character"""
+right_format = '$cmd_duration$jobs'
+
+[directory]
+style = 'bg:#edb86e fg:#151522'
+format = '[ $path ]($style)'
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' '
+
+[git_branch]
+style = 'bg:#30251f fg:#edb86e'
+symbol = ' '
+format = '[ $symbol$branch ]($style)'
+
+[git_status]
+style = 'bg:#30251f fg:#edb86e'
+format = '([ $all_status$ahead_behind ]($style))'
+conflicted = '!'
+ahead = '↑${count}'
+behind = '↓${count}'
+diverged = '↕'
+untracked = '?'
+stashed = '≡'
+modified = '~'
+staged = '+'
+renamed = '»'
+deleted = '×'
+
+[character]
+success_symbol = '[❯](bold #edb86e)'
+error_symbol = '[×](bold #e78284)'
+vimcmd_symbol = '[❮](bold #cd8b62)'
+
+[cmd_duration]
+min_time = 2000
+style = '#f4d9b0'
+format = '[ $duration ]($style)'
+
+[time]
+disabled = false
+time_format = '%H:%M'
+style = '#cd8b62'
+format = '[ $time ]($style)'
+
+[fill]
+symbol = ' '
+
+[jobs]
+style = '#f4d9b0'
+symbol = '⋮ '
+format = '[ $symbol$number ]($style)'
