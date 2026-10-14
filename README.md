@@ -1,6 +1,6 @@
 # Aster
 
-An Aurora terminal studio for [Starship](https://starship.rs) prompts. Aster opens your current prompt ready to edit, with simple controls, a live preview, presets, and an Advanced area for technical settings.
+A terminal studio for [Starship](https://starship.rs) prompts. Aster opens your current prompt ready to edit, with simple controls, a live preview, presets, and an Advanced area for technical settings.
 
 ![Aster in Foot](docs/screenshot.png)
 
@@ -59,7 +59,7 @@ At 100 columns and wider, controls and previews appear together. Narrower views 
 
 Custom command modules, including `when` scripts, are disabled in preview copies until you approve the displayed definitions for the session through Actions. Changing their definitions revokes approval. Your actual draft is retained. Preview jobs are debounced, obsolete jobs are discarded, subprocess groups time out, Ctrl+X cancels rendering, and temporary files are cleaned up. Detection uses the chosen directory; conditional modules can legitimately produce no output.
 
-Aurora is the default appearance. Actions cycles Aurora, Follow Omarchy, and Terminal; the choice is stored under the XDG data directory in `aster/appearance`, separately from prompt colors. Follow Omarchy refreshes its palette while Aster runs. There is no crimson appearance.
+Actions cycles between the Aurora, Follow Omarchy, and Terminal themes; the choice is stored under the XDG data directory in `aster/appearance`, separately from prompt colors. Follow Omarchy refreshes its palette while Aster runs.
 
 ## Saving and verification
 
