@@ -1622,6 +1622,11 @@ mod tests {
     fn mouse_properties_and_guarded_modal_targets() {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("s.toml"),
+            "format = '$directory$character'\n",
+        )
+        .unwrap();
         let mut a = App::new(dir.path().join("s.toml"), false, false);
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         a.screen = 0;
@@ -1664,7 +1669,10 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert!(!a.workspace.dirty());
-        assert!(!a.workspace.path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&a.workspace.path).unwrap(),
+            a.workspace.baseline
+        );
         assert!(matches!(&a.overlay,Some(Overlay::Input(input)) if input.error.is_some()));
     }
 }
